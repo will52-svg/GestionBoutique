@@ -4,26 +4,30 @@ const cors = require('cors');
 
 const app = express();
 
-// CONFIGURATION CORS : Port 5173 (celui de ton navigateur)
-app.use(cors({
-    origin: 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-    credentials: true
-}));
+// 1. CONFIGURATION CORS : On autorise tout pour le moment pour faciliter les tests
+// Plus tard, on mettra l'adresse de ton site Vercel ici.
+app.use(cors());
 
 app.use(express.json());
 
-// CONNEXION BDD
+// 2. CONNEXION BDD : On utilise les variables d'environnement de Render
 const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '', 
-    database: 'gestion_boutique'
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT,
+    ssl: {
+        rejectUnauthorized: false // Indispensable pour la sécurité d'Aiven
+    }
 });
 
 db.connect((err) => {
-    if (err) return console.error('Erreur MySQL:', err);
-    console.log('Connecté à MySQL sur le port 3000');
+    if (err) {
+        console.error('Erreur de connexion à Aiven:', err.message);
+        return;
+    }
+    console.log('Connecté avec succès à la base de données Aiven !');
 });
 
 // Route pour les produits
@@ -37,16 +41,29 @@ app.get('/produits', (req, res) => {
 // Route pour valider la facture
 app.post('/valider-facture', (req, res) => {
     const { nomClient, date, panier } = req.body;
-    panier.forEach(item => {
-        const sqlVente = "INSERT INTO ventes (date_vente, produit_id, quantite_vendue, client, total_vente) VALUES (?, ?, ?, ?, ?)";
-        db.query(sqlVente, [date, item.id, item.qte, nomClient, item.total]);
-
-        const sqlUpdate = "UPDATE produits SET sorties = sorties + ? WHERE id = ?";
-        db.query(sqlUpdate, [item.qte, item.id]);
+    
+    // On utilise une boucle pour gérer les requêtes proprement
+    const promises = panier.map(item => {
+        return new Promise((resolve, reject) => {
+            const sqlVente = "INSERT INTO ventes (date_vente, produit_id, quantite_vendue, client, total_vente) VALUES (?, ?, ?, ?, ?)";
+            db.query(sqlVente, [date, item.id, item.qte, nomClient, item.total], (err) => {
+                if (err) return reject(err);
+                
+                const sqlUpdate = "UPDATE produits SET sorties = sorties + ? WHERE id = ?";
+                db.query(sqlUpdate, [item.qte, item.id], (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                });
+            });
+        });
     });
-    res.json({ message: "Succès" });
+
+    Promise.all(promises)
+        .then(() => res.json({ message: "Succès" }))
+        .catch(err => res.status(500).json(err));
 });
 
+// 3. PORT DYNAMIQUE : Indispensable pour Render
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
