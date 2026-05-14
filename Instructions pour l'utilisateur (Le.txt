@@ -1,0 +1,21 @@
+ Instructions pour l'utilisateur (Le "Mode d'emploi")
+
+A. Installation des outils :
+
+Installer XAMPP (pour MySQL).
+
+Installer Node.js.
+
+B. Mise en place de la base de données :
+
+Ouvrir PHPMyAdmin et créer une base vide nommée gestion_boutique.
+
+Cliquer sur Importer et choisir le fichier gestion_boutique.sql 
+
+C. Lancement du logiciel :
+
+Ouvrir le dossier dans un terminal.
+
+Dans le dossier BackEnd : Taper npm install puis node server.js.
+
+Dans le dossier FrontEnd : Taper npm install puis npm run dev.
