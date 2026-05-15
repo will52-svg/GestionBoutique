@@ -1,16 +1,15 @@
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
 
 const app = express();
-
-// 1. CONFIGURATION CORS : On autorise tout pour le moment pour faciliter les tests
-// Plus tard, on mettra l'adresse de ton site Vercel ici.
 app.use(cors());
-
 app.use(express.json());
 
-// 2. CONNEXION BDD : On utilise les variables d'environnement de Render
+// Configuration de la connexion à Aiven
 const db = mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -18,54 +17,87 @@ const db = mysql.createConnection({
     database: process.env.DB_NAME,
     port: process.env.DB_PORT,
     ssl: {
-        rejectUnauthorized: false // Indispensable pour la sécurité d'Aiven
+        rejectUnauthorized: false
     }
 });
 
 db.connect((err) => {
     if (err) {
-        console.error('Erreur de connexion à Aiven:', err.message);
+        console.error('Erreur de connexion à Aiven :', err.message);
         return;
     }
-    console.log('Connecté avec succès à la base de données Aiven !');
+    console.log('Connecté à la base de données MySQL sur Aiven !');
+
+    // --- INJECTION AUTOMATIQUE DU FICHIER SQL ---
+    const sqlPath = path.join(__dirname, 'gestion_boutique.sql');
+    
+    if (fs.existsSync(sqlPath)) {
+        fs.readFile(sqlPath, 'utf8', (err, data) => {
+            if (err) {
+                console.error("Erreur de lecture du fichier SQL:", err);
+                return;
+            }
+
+            // On sépare les requêtes par ";" pour les exécuter une par une
+            const queries = data.split(';').filter(q => q.trim() !== '');
+            
+            queries.forEach(query => {
+                db.query(query, (err) => {
+                    if (err) {
+                        // On ignore l'erreur si la table existe déjà
+                        if (!err.message.includes("already exists")) {
+                            console.log("Info SQL :", err.message);
+                        }
+                    }
+                });
+            });
+            console.log("Script SQL traité (Tables créées/vérifiées).");
+        });
+    } else {
+        console.log("Fichier gestion_boutique.sql introuvable, injection ignorée.");
+    }
 });
 
-// Route pour les produits
+// --- ROUTES DE L'APPLICATION ---
+
+// Récupérer tous les produits
 app.get('/produits', (req, res) => {
-    db.query("SELECT * FROM produits", (err, data) => {
+    db.query('SELECT * FROM produits', (err, results) => {
         if (err) return res.status(500).json(err);
-        res.json(data);
+        res.json(results);
     });
 });
 
-// Route pour valider la facture
-app.post('/valider-facture', (req, res) => {
-    const { nomClient, date, panier } = req.body;
-    
-    // On utilise une boucle pour gérer les requêtes proprement
-    const promises = panier.map(item => {
-        return new Promise((resolve, reject) => {
-            const sqlVente = "INSERT INTO ventes (date_vente, produit_id, quantite_vendue, client, total_vente) VALUES (?, ?, ?, ?, ?)";
-            db.query(sqlVente, [date, item.id, item.qte, nomClient, item.total], (err) => {
-                if (err) return reject(err);
-                
-                const sqlUpdate = "UPDATE produits SET sorties = sorties + ? WHERE id = ?";
-                db.query(sqlUpdate, [item.qte, item.id], (err) => {
-                    if (err) return reject(err);
-                    resolve();
+// Enregistrer une vente et mettre à jour le stock
+app.post('/ventes', (req, res) => {
+    const { client, produits } = req.body; // produits est un tableau d'objets {id, quantite}
+
+    // On utilise une transaction pour être sûr que tout s'enregistre bien
+    db.beginTransaction((err) => {
+        if (err) return res.status(500).json(err);
+
+        produits.forEach((p) => {
+            // 1. Ajouter la vente
+            const sqlVente = 'INSERT INTO ventes (nom_client, produit_id, quantite, date_vente) VALUES (?, ?, ?, NOW())';
+            db.query(sqlVente, [client, p.id, p.quantite], (err) => {
+                if (err) return db.rollback(() => res.status(500).json(err));
+
+                // 2. Mettre à jour les sorties dans la table produits
+                const sqlUpdate = 'UPDATE produits SET sorties = sorties + ? WHERE id = ?';
+                db.query(sqlUpdate, [p.quantite, p.id], (err) => {
+                    if (err) return db.rollback(() => res.status(500).json(err));
                 });
             });
         });
-    });
 
-    Promise.all(promises)
-        .then(() => res.json({ message: "Succès" }))
-        .catch(err => res.status(500).json(err));
+        db.commit((err) => {
+            if (err) return db.rollback(() => res.status(500).json(err));
+            res.json({ message: "Vente enregistrée et stock mis à jour !" });
+        });
+    });
 });
 
-// 3. PORT DYNAMIQUE : Indispensable pour Render
-const PORT = process.env.PORT || 3000;
-
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
+    console.log(`Serveur Backend lancé sur le port ${PORT}`);
 });
