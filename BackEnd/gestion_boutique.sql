@@ -27,6 +27,14 @@ SET time_zone = "+00:00";
 -- Structure de la table `produits`
 --
 
+CREATE TABLE ventes (
+    id_vente INT AUTO_INCREMENT PRIMARY KEY,
+    id_produit INT,
+    quantite INT,
+    date_vente DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_produit) REFERENCES produits(id_produit)
+);
+
 DROP TABLE IF EXISTS `produits`;
 CREATE TABLE IF NOT EXISTS `produits` (
   `id` varchar(10) NOT NULL,
